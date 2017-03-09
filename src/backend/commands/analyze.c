@@ -95,7 +95,7 @@ static VacAttrStats *examine_attribute(Relation onerel, int attnum);
 static int acquire_sample_rows(Relation onerel, HeapTuple *rows,
 					int targrows, double *totalrows, double *totaldeadrows);
 static int acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrstats, HeapTuple **rows,
-										int targrows, double *totalrows, double *totaldeadrows, BlockNumber *totalpages, bool rootonly);
+										int targrows, double *totalrows, double *totaldeadrows, BlockNumber *totalpages, bool rootonly, bool *removeAttr);
 static double random_fract(void);
 static double init_selection_state(int n);
 static double get_next_S(double t, int n, double *stateptr);
@@ -389,8 +389,10 @@ analyze_rel(Oid relid, VacuumStmt *vacstmt,
 	/*
 	 * Acquire the sample rows
 	 */
+	bool *removeAttr = (bool *)palloc(sizeof(bool)* attr_cnt);
+	memset(removeAttr, false, sizeof(bool) * attr_cnt);
 	numrows = acquire_sample_rows_by_query(onerel, attr_cnt, vacattrstats, &rows, targrows,
-										   &totalrows, &totaldeadrows, &totalpages, vacstmt->rootonly);
+										   &totalrows, &totaldeadrows, &totalpages, vacstmt->rootonly, removeAttr);
 
 	/*
 	 * Compute the statistics.	Temporary results during the calculations for
@@ -414,7 +416,7 @@ analyze_rel(Oid relid, VacuumStmt *vacstmt,
 		{
 			VacAttrStats *stats = vacattrstats[i];
 
-			if(stats->stats_valid)
+			if(!removeAttr[i])
 			{
 				stats->rows = rows;
 				stats->tupDesc = onerel->rd_att;
@@ -1310,7 +1312,7 @@ compare_rows(const void *a, const void *b)
 static int
 acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrstats,
 							 HeapTuple **rows, int targrows,
-							 double *totalrows, double *totaldeadrows, BlockNumber *totalblocks, bool rootonly)
+							 double *totalrows, double *totaldeadrows, BlockNumber *totalblocks, bool rootonly, bool *removeAttr)
 {
 	StringInfoData str;
 	StringInfoData columnStr;
@@ -1387,10 +1389,9 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
                                      quote_identifier(NameStr(attrstats[i]->attr->attname)));
                     
                     appendStringInfo(&columnStr,
-                                     "(case when octet_length(Ta.%s) > %d then 2 else 1  end) as ignore_%s",
+                                     "(case when octet_length(Ta.%s) > %d then 2 else 1  end)",
                                      quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     analyze_column_width_threshold,
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)));
+                                     analyze_column_width_threshold);
                     
                     hasIgnoreCol[i] = true;
                 }
@@ -1412,11 +1413,10 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
                                      quote_identifier(NameStr(attrstats[i]->attr->attname)));
                     
 						appendStringInfo(&columnStr,
-                                     "(case when pg_column_size(Ta.%s) > %d then 2 else 1  end) as ignore_%s",
+                                     "(case when pg_column_size(Ta.%s) > %d then 2 else 1  end)",
                                      quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     1024,
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)));
-                    
+                                     1024);
+
 						hasIgnoreCol[i] = true;
 					}
 				}
@@ -1516,7 +1516,7 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 		}
 
 		*rows = (HeapTuple *) palloc(sampleTuples * sizeof(HeapTuple));
-        bool *removeAttr = (bool *)palloc(sizeof(bool)*nattrs);
+
 
 		for (i = 0; i < sampleTuples; i++)
 		{
@@ -1526,8 +1526,12 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
             
 			for (j = 0; j < nattrs; j++)
 			{
+				if (removeAttr[j])
+				{
+					index = index+2;
+					continue;
+				}
 				int			tupattnum = attrstats[j]->tupattnum;
-				removeAttr[j] = false;
 
 				Assert(tupattnum >= 1 && tupattnum <= RelationGetNumberOfAttributes(onerel));
 
@@ -1550,21 +1554,20 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
                             // Datum is too large. Do not include it in samples
 							removeAttr[j] = true;
 						}
-
                     }
-                    index++;
                 }
+				index++;
             }
 			(*rows)[i] = heap_form_tuple(onerel->rd_att, vals, nulls);
 		}
 
-		for (i = 0; i < nattrs; i++)
-		{
-			if(removeAttr[i])
-			{
-				attrstats[i]->stats_valid = 0;
-			}
-		}
+//		for (i = 0; i < nattrs; i++)
+//		{
+//			if(removeAttr[i])
+//			{
+//				attrstats[i]->stats_valid = 0;
+//			}
+//		}
 
 		/**
 		 * MPP-10723: Very rarely, we may be unlucky and get an empty sample. We
@@ -1799,7 +1802,7 @@ update_attstats(Oid relid, int natts, VacAttrStats **vacattrstats)
 		char		replaces[Natts_pg_statistic];
 
 		/* Ignore attr if we weren't able to collect stats */
-		if (!stats || !stats->stats_valid)
+		if (!stats->stats_valid)
 			continue;
 
 		/*
