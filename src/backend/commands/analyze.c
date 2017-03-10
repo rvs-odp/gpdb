@@ -1385,35 +1385,32 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 			for (i = 0; i < nattrs; i++)
 			{
 				hasIgnoreCol[i] = false;
+				bool udtFlag = false;
 
-				if (attrstats[i]->attr->atttypid == TEXTOID  ||
-					attrstats[i]->attr->atttypid == BYTEAOID ||
-					attrstats[i]->attr->atttypid == VARCHAROID )
+				Oid attrtypid = attrstats[i]->attr->atttypid;
+
+				if (attrtypid == TEXTOID  ||
+					attrtypid == BYTEAOID ||
+					attrtypid == VARCHAROID ||
+					attrtypid > 10000)
 				{
 
-					appendStringInfo(&columnStr,
-									 "(case when octet_length(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
-									 quote_identifier(NameStr(attrstats[i]->attr->attname)),
-									 analyze_column_width_threshold,
-									 quote_identifier(NameStr(attrstats[i]->attr->attname)),
-									 quote_identifier(NameStr(attrstats[i]->attr->attname)));
+					if (attrtypid > 10000) /* If User Defined Type */
+					{
+						HeapTuple typtuple = SearchSysCacheCopy(TYPEOID,
+																ObjectIdGetDatum(attrstats[i]->attr->atttypid),
+																0, 0, 0);
+						if (!HeapTupleIsValid(typtuple))
+							elog(ERROR, "cache lookup failed for type %u", attrstats[i]->attr->atttypid);
+						Form_pg_type attrtype = (Form_pg_type) GETSTRUCT(typtuple);
 
-					appendStringInfo(&columnStr,
-									 "(case when octet_length(Ta.%s) > %d then 2 else 1 end)",
-									 quote_identifier(NameStr(attrstats[i]->attr->attname)),
-									 analyze_column_width_threshold);
+						if (attrtype->typlen >= 0)
+						{
+							udtFlag = true;
+						}
+					}
 
-					hasIgnoreCol[i] = true;
-				}
-				else if(attrstats[i]->attr->atttypid > 10000){
-					HeapTuple typtuple = SearchSysCacheCopy(TYPEOID,
-															ObjectIdGetDatum(attrstats[i]->attr->atttypid),
-															0, 0, 0);
-					if (!HeapTupleIsValid(typtuple))
-						elog(ERROR, "cache lookup failed for type %u", attrstats[i]->attr->atttypid);
-					Form_pg_type attrtype = (Form_pg_type) GETSTRUCT(typtuple);
-
-					if ( attrtype->typlen < 0)
+					if (!udtFlag)
 					{
 						appendStringInfo(&columnStr,
 										 "(case when pg_column_size(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
@@ -1426,11 +1423,9 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 										 "(case when pg_column_size(Ta.%s) > %d then 2 else 1 end)",
 										 quote_identifier(NameStr(attrstats[i]->attr->attname)),
 										 WIDTH_THRESHOLD);
-
 						hasIgnoreCol[i] = true;
 					}
 				}
-
 				if (!hasIgnoreCol[i])
 				{
 					appendStringInfo(&columnStr, "Ta.%s", quote_identifier(NameStr(attrstats[i]->attr->attname)));
