@@ -95,7 +95,7 @@ static VacAttrStats *examine_attribute(Relation onerel, int attnum);
 static int acquire_sample_rows(Relation onerel, HeapTuple *rows,
 					int targrows, double *totalrows, double *totaldeadrows);
 static int acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrstats, HeapTuple **rows,
-										int targrows, double *totalrows, double *totaldeadrows, BlockNumber *totalpages, bool rootonly, bool *removeAttr);
+										int targrows, double *totalrows, double *totaldeadrows, BlockNumber *totalpages, bool rootonly, bool *ignoreStatAttr);
 static double random_fract(void);
 static double init_selection_state(int n);
 static double get_next_S(double t, int n, double *stateptr);
@@ -389,10 +389,10 @@ analyze_rel(Oid relid, VacuumStmt *vacstmt,
 	/*
 	 * Acquire the sample rows
 	 */
-	bool *removeAttr = (bool *)palloc(sizeof(bool)* attr_cnt);
-	memset(removeAttr, false, sizeof(bool) * attr_cnt);
+	bool *ignoreStatAttr = (bool *)palloc(sizeof(bool)* attr_cnt);
+	memset(ignoreStatAttr, false, sizeof(bool) * attr_cnt);
 	numrows = acquire_sample_rows_by_query(onerel, attr_cnt, vacattrstats, &rows, targrows,
-										   &totalrows, &totaldeadrows, &totalpages, vacstmt->rootonly, removeAttr);
+										   &totalrows, &totaldeadrows, &totalpages, vacstmt->rootonly, ignoreStatAttr);
 
 	/*
 	 * Compute the statistics.	Temporary results during the calculations for
@@ -416,7 +416,7 @@ analyze_rel(Oid relid, VacuumStmt *vacstmt,
 		{
 			VacAttrStats *stats = vacattrstats[i];
 
-			if(!removeAttr[i])
+			if(!ignoreStatAttr[i])
 			{
 				stats->rows = rows;
 				stats->tupDesc = onerel->rd_att;
@@ -1312,7 +1312,7 @@ compare_rows(const void *a, const void *b)
 static int
 acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrstats,
 							 HeapTuple **rows, int targrows,
-							 double *totalrows, double *totaldeadrows, BlockNumber *totalblocks, bool rootonly, bool *removeAttr)
+							 double *totalrows, double *totaldeadrows, BlockNumber *totalblocks, bool rootonly, bool *ignoreStatAttr)
 {
 	StringInfoData str;
 	StringInfoData columnStr;
@@ -1517,57 +1517,50 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 
 		*rows = (HeapTuple *) palloc(sampleTuples * sizeof(HeapTuple));
 
-
 		for (i = 0; i < sampleTuples; i++)
 		{
 			HeapTuple	sampletup = SPI_tuptable->vals[i];
 			int			j;
-            int index = 0;
+            int			index = 0;
             
 			for (j = 0; j < nattrs; j++)
 			{
-				if (removeAttr[j])
+				if (ignoreStatAttr[j])
 				{
-					index = index+2;
+					/*
+					 * One of the value for this column is beyond the threshold,
+					 * so ignore sampling the rest of the tuples for this column
+					 * as no stats will be calculated for it.
+					 * Move the index to the next table attribute in sample tuple
+					 */
+					index+=2;
 					continue;
 				}
-				int			tupattnum = attrstats[j]->tupattnum;
+
+				int	tupattnum = attrstats[j]->tupattnum;
 
 				Assert(tupattnum >= 1 && tupattnum <= RelationGetNumberOfAttributes(onerel));
 
 				vals[tupattnum - 1] = heap_getattr(sampletup, index + 1,
 												   SPI_tuptable->tupdesc,
 												   &nulls[tupattnum - 1]);
-                if(hasIgnoreCol[j])
+                if (hasIgnoreCol[j])
                 {
-                    index++;
-                    
-                    if(nulls[tupattnum - 1])
+                    index++; /* Move the index to the supplementary column*/
+                    if (nulls[tupattnum - 1])
                     {
                         bool dummyNull = false;
                         Datum dummyVal = heap_getattr(sampletup, index + 1,
                                                       SPI_tuptable->tupdesc,
                                                        &dummyNull);
                         
-                        if(DatumGetInt32(dummyVal) == 2)
-                        {
-                            // Datum is too large. Do not include it in samples
-							removeAttr[j] = true;
-						}
+                        if (DatumGetInt32(dummyVal) == 2) ignoreStatAttr[j] = true; /* Datum is too large, ignore original column */
                     }
                 }
-				index++;
+				index++; /* Move index to the next table attribute */
             }
 			(*rows)[i] = heap_form_tuple(onerel->rd_att, vals, nulls);
 		}
-
-//		for (i = 0; i < nattrs; i++)
-//		{
-//			if(removeAttr[i])
-//			{
-//				attrstats[i]->stats_valid = 0;
-//			}
-//		}
 
 		/**
 		 * MPP-10723: Very rarely, we may be unlucky and get an empty sample. We
