@@ -1385,7 +1385,7 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 			for (i = 0; i < nattrs; i++)
 			{
 				hasIgnoreCol[i] = false;
-				bool udtFlag = false;
+				bool udtFixedLen = false;
 
 				Oid attrtypid = attrstats[i]->attr->atttypid;
 
@@ -1406,11 +1406,11 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 
 						if (attrtype->typlen >= 0)
 						{
-							udtFlag = true;
+							udtFixedLen = true;
 						}
 					}
 
-					if (!udtFlag)
+					if (!udtFixedLen)
 					{
 						appendStringInfo(&columnStr,
 										 "(case when pg_column_size(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
