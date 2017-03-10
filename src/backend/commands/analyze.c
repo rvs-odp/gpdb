@@ -50,6 +50,16 @@
 #include "utils/syscache.h"
 #include "utils/tuplesort.h"
 
+/*
+ * To avoid consuming too much memory during analysis and/or too much space
+ * in the resulting pg_statistic rows, we ignore varlena datums that are wider
+ * than WIDTH_THRESHOLD (after detoasting!).  This is legitimate for MCV
+ * and distinct-value calculations since a wide value is unlikely to be
+ * duplicated at all, much less be a most-common value.  For the same reason,
+ * ignoring wide values will not affect our estimates of histogram bin
+ * boundaries very much.
+ */
+#define WIDTH_THRESHOLD  1024
 
 /* Data structure for Algorithm S from Knuth 3.4.2 */
 typedef struct
@@ -1389,7 +1399,7 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 									 quote_identifier(NameStr(attrstats[i]->attr->attname)));
 
 					appendStringInfo(&columnStr,
-									 "(case when octet_length(Ta.%s) > %d then 2 else 1  end)",
+									 "(case when octet_length(Ta.%s) > %d then 2 else 1 end)",
 									 quote_identifier(NameStr(attrstats[i]->attr->attname)),
 									 analyze_column_width_threshold);
 
@@ -1408,14 +1418,14 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 						appendStringInfo(&columnStr,
 										 "(case when pg_column_size(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
 										 quote_identifier(NameStr(attrstats[i]->attr->attname)),
-										 1024,
+										 WIDTH_THRESHOLD,
 										 quote_identifier(NameStr(attrstats[i]->attr->attname)),
 										 quote_identifier(NameStr(attrstats[i]->attr->attname)));
 
 						appendStringInfo(&columnStr,
-										 "(case when pg_column_size(Ta.%s) > %d then 2 else 1  end)",
+										 "(case when pg_column_size(Ta.%s) > %d then 2 else 1 end)",
 										 quote_identifier(NameStr(attrstats[i]->attr->attname)),
-										 1024);
+										 WIDTH_THRESHOLD);
 
 						hasIgnoreCol[i] = true;
 					}
@@ -1940,18 +1950,6 @@ ind_fetch_func(VacAttrStatsP stats, int rownum, bool *isNull)
  *
  *==========================================================================
  */
-
-
-/*
- * To avoid consuming too much memory during analysis and/or too much space
- * in the resulting pg_statistic rows, we ignore varlena datums that are wider
- * than WIDTH_THRESHOLD (after detoasting!).  This is legitimate for MCV
- * and distinct-value calculations since a wide value is unlikely to be
- * duplicated at all, much less be a most-common value.  For the same reason,
- * ignoring wide values will not affect our estimates of histogram bin
- * boundaries very much.
- */
-#define WIDTH_THRESHOLD  1024
 
 #define swapInt(a,b)	do {int _tmp; _tmp=a; a=b; b=_tmp;} while(0)
 #define swapDatum(a,b)	do {Datum _tmp; _tmp=a; a=b; b=_tmp;} while(0)
