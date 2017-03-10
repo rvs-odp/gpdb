@@ -1368,37 +1368,37 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 		tableName = RelationGetRelationName(onerel);
 
 		initStringInfo(&columnStr);
-        bool *hasIgnoreCol = (bool *)palloc(sizeof(bool)*nattrs);
-        
-        if (nattrs > 0)
-        {
-            for (i = 0; i < nattrs; i++)
-            {
+		bool *hasIgnoreCol = (bool *)palloc(sizeof(bool)*nattrs);
+
+		if (nattrs > 0)
+		{
+			for (i = 0; i < nattrs; i++)
+			{
 				hasIgnoreCol[i] = false;
 
-                if (attrstats[i]->attr->atttypid == TEXTOID  ||
-                    attrstats[i]->attr->atttypid == BYTEAOID ||
-                    attrstats[i]->attr->atttypid == VARCHAROID )
-                {
-                    
-                    appendStringInfo(&columnStr,
-                                     "(case when octet_length(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     analyze_column_width_threshold,
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)));
-                    
-                    appendStringInfo(&columnStr,
-                                     "(case when octet_length(Ta.%s) > %d then 2 else 1  end)",
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     analyze_column_width_threshold);
-                    
-                    hasIgnoreCol[i] = true;
-                }
+				if (attrstats[i]->attr->atttypid == TEXTOID  ||
+					attrstats[i]->attr->atttypid == BYTEAOID ||
+					attrstats[i]->attr->atttypid == VARCHAROID )
+				{
+
+					appendStringInfo(&columnStr,
+									 "(case when octet_length(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
+									 quote_identifier(NameStr(attrstats[i]->attr->attname)),
+									 analyze_column_width_threshold,
+									 quote_identifier(NameStr(attrstats[i]->attr->attname)),
+									 quote_identifier(NameStr(attrstats[i]->attr->attname)));
+
+					appendStringInfo(&columnStr,
+									 "(case when octet_length(Ta.%s) > %d then 2 else 1  end)",
+									 quote_identifier(NameStr(attrstats[i]->attr->attname)),
+									 analyze_column_width_threshold);
+
+					hasIgnoreCol[i] = true;
+				}
 				else if(attrstats[i]->attr->atttypid > 10000){
 					HeapTuple typtuple = SearchSysCacheCopy(TYPEOID,
-								  ObjectIdGetDatum(attrstats[i]->attr->atttypid),
-								  0, 0, 0);
+															ObjectIdGetDatum(attrstats[i]->attr->atttypid),
+															0, 0, 0);
 					if (!HeapTupleIsValid(typtuple))
 						elog(ERROR, "cache lookup failed for type %u", attrstats[i]->attr->atttypid);
 					Form_pg_type attrtype = (Form_pg_type) GETSTRUCT(typtuple);
@@ -1406,37 +1406,37 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 					if ( attrtype->typlen < 0)
 					{
 						appendStringInfo(&columnStr,
-                                     "(case when pg_column_size(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     1024,
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)));
-                    
+										 "(case when pg_column_size(Ta.%s) > %d then NULL else Ta.%s  end) as %s, ",
+										 quote_identifier(NameStr(attrstats[i]->attr->attname)),
+										 1024,
+										 quote_identifier(NameStr(attrstats[i]->attr->attname)),
+										 quote_identifier(NameStr(attrstats[i]->attr->attname)));
+
 						appendStringInfo(&columnStr,
-                                     "(case when pg_column_size(Ta.%s) > %d then 2 else 1  end)",
-                                     quote_identifier(NameStr(attrstats[i]->attr->attname)),
-                                     1024);
+										 "(case when pg_column_size(Ta.%s) > %d then 2 else 1  end)",
+										 quote_identifier(NameStr(attrstats[i]->attr->attname)),
+										 1024);
 
 						hasIgnoreCol[i] = true;
 					}
 				}
 
-                if (!hasIgnoreCol[i])
+				if (!hasIgnoreCol[i])
 				{
-                    appendStringInfo(&columnStr, "Ta.%s", quote_identifier(NameStr(attrstats[i]->attr->attname)));
-                }
-                
-                if (i != nattrs - 1 )
-                {
-                    appendStringInfo(&columnStr, ", ");
-                }
-            }
-            
-        }
-        else
-        {
-            appendStringInfo(&columnStr, "NULL");
-        }
+					appendStringInfo(&columnStr, "Ta.%s", quote_identifier(NameStr(attrstats[i]->attr->attname)));
+				}
+
+				if (i != nattrs - 1 )
+				{
+					appendStringInfo(&columnStr, ", ");
+				}
+			}
+
+		}
+		else
+		{
+			appendStringInfo(&columnStr, "NULL");
+		}
 
 		/*
 		 * If table is partitioned, we create a sample over all parts.
@@ -1521,8 +1521,8 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 		{
 			HeapTuple	sampletup = SPI_tuptable->vals[i];
 			int			j;
-            int			index = 0;
-            
+			int			index = 0;
+
 			for (j = 0; j < nattrs; j++)
 			{
 				if (ignoreStatAttr[j])
@@ -1544,21 +1544,21 @@ acquire_sample_rows_by_query(Relation onerel, int nattrs, VacAttrStats **attrsta
 				vals[tupattnum - 1] = heap_getattr(sampletup, index + 1,
 												   SPI_tuptable->tupdesc,
 												   &nulls[tupattnum - 1]);
-                if (hasIgnoreCol[j])
-                {
-                    index++; /* Move the index to the supplementary column*/
-                    if (nulls[tupattnum - 1])
-                    {
-                        bool dummyNull = false;
-                        Datum dummyVal = heap_getattr(sampletup, index + 1,
-                                                      SPI_tuptable->tupdesc,
-                                                       &dummyNull);
-                        
-                        if (DatumGetInt32(dummyVal) == 2) ignoreStatAttr[j] = true; /* Datum is too large, ignore original column */
-                    }
-                }
+				if (hasIgnoreCol[j])
+				{
+					index++; /* Move the index to the supplementary column*/
+					if (nulls[tupattnum - 1])
+					{
+						bool dummyNull = false;
+						Datum dummyVal = heap_getattr(sampletup, index + 1,
+													  SPI_tuptable->tupdesc,
+													  &dummyNull);
+
+						if (DatumGetInt32(dummyVal) == 2) ignoreStatAttr[j] = true; /* Datum is too large, ignore original column */
+					}
+				}
 				index++; /* Move index to the next table attribute */
-            }
+			}
 			(*rows)[i] = heap_form_tuple(onerel->rd_att, vals, nulls);
 		}
 
